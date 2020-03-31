@@ -1,57 +1,58 @@
-PROG_NAME := "prometheus-sql"
-IMAGE_NAME := "dbhi/prometheus-sql"
-CMD_PATH := "."
+REPONAME := monitoring
+APPNAME := prometheus-sql
 
-GIT_SHA := $(shell git log -1 --pretty=format:"%h" .)
-GIT_TAG := $(shell git describe --tags --exact-match . 2>/dev/null)
-GIT_BRANCH := $(shell git symbolic-ref -q --short HEAD)
-GIT_VERSION := $(shell git log -1 --pretty=format:"%h (%ci)" .)
+# If TAG is passed in, use that.  Otherwise, default to latest
+TAG := $(if $(TAG),$(TAG),latest)
+STAGE := $(if ${STAGE},${STAGE},staging)
 
-build:
-	go build -ldflags "-X \"main.buildVersion=$(GIT_VERSION)\"" \
-		-o $(GOPATH)/bin/$(PROG_NAME) $(CMD_PATH)
+# Retrieve current git branch and latest commit SHA.
+BRANCH := $(shell git symbolic-ref HEAD | sed -e 's,.*/\(.*\),\1,')
+SHORTSHA := $(shell git log --pretty=format:'%h' -n 1)
+# If there are uncommitted changes, add "-dirty" to the tag.
+DIRTY := $(if $(shell git status --porcelain --untracked-files=no),-dirty,)
 
-dist-build:
-	mkdir -p dist
+include ~/.ibis/${STAGE}.env
 
-	gox -output="./dist/{{.OS}}-{{.Arch}}/$(PROG_NAME)" \
-		-ldflags "-X \"main.buildVersion=$(GIT_VERSION)\"" \
-		-os "windows linux darwin" \
-		-arch "amd64" $(CMD_PATH) > /dev/null
+## image: Build the Docker image
+.PHONY: image
+image:
+	docker build --rm . -t '${REPONAME}/$(APPNAME):latest'
+	docker tag ${REPONAME}/$(APPNAME):latest ${REPONAME}/$(APPNAME):$(TAG)
+	docker tag ${REPONAME}/$(APPNAME):latest ${REPONAME}/$(APPNAME):$(BRANCH)
+	docker tag ${REPONAME}/$(APPNAME):latest ${REPONAME}/$(APPNAME):$(BRANCH)-$(SHORTSHA)$(DIRTY)
 
-dist-pkg:
-	cd dist && tar -czvf $(PROG_NAME)-darwin-amd64.tar.gz darwin-amd64/*
-	cd dist && tar -czvf $(PROG_NAME)-linux-amd64.tar.gz linux-amd64/*
-	cd dist && zip $(PROG_NAME)-windows-amd64.zip windows-amd64/*
+.PHONY: tag
+tag:
+	docker tag ${REPONAME}/$(APPNAME):latest ${REPONAME}/$(APPNAME):$(TAG)
 
-dist: dist-build dist-pkg
+CMD := $(shell aws ecr get-login --region us-west-2 --no-include-email)
+## registry-login: Log in to Amazon Cloud
+.PHONY: registry-login
+registry-login:
+	@eval $(CMD)
 
-docker:
-	docker build -t ${IMAGE_NAME}:${GIT_SHA} .
-	docker tag ${IMAGE_NAME}:${GIT_SHA} ${IMAGE_NAME}:${GIT_BRANCH}
-	if [ -n "${GIT_TAG}" ] ; then \
-		docker tag ${IMAGE_NAME}:${GIT_SHA} ${IMAGE_NAME}:${GIT_TAG} ; \
-	fi;
-	if [ "${GIT_BRANCH}" == "master" ]; then \
-		docker tag ${IMAGE_NAME}:${GIT_SHA} ${IMAGE_NAME}:latest ; \
-	fi;
+## push-image: Push the image to Amazon ECR
+.PHONY: push-image
+push-image: image registry-login
+	docker tag ${REPONAME}/$(APPNAME):$(TAG) \
+		${AWS_ECR_BASE_ADDRESS}/${REPONAME}/$(APPNAME):$(TAG)
+	docker push ${AWS_ECR_BASE_ADDRESS}/${REPONAME}/$(APPNAME):$(TAG)
 
-docker-push:
-	docker push ${IMAGE_NAME}:${GIT_SHA}
-	docker push ${IMAGE_NAME}:${GIT_BRANCH}
-	if [ -n "${GIT_TAG}" ]; then \
-		docker push ${IMAGE_NAME}:${GIT_TAG} ; \
-	fi;
-	if [ "${GIT_BRANCH}" == "master" ]; then \
-		docker push ${IMAGE_NAME}:latest ; \
-	fi;
+	docker tag ${REPONAME}/$(APPNAME):$(BRANCH) \
+		${AWS_ECR_BASE_ADDRESS}/${REPONAME}/$(APPNAME):$(BRANCH)
+	docker push ${AWS_ECR_BASE_ADDRESS}/${REPONAME}/$(APPNAME):$(BRANCH)
 
-prepareDeps:
-	go get -d
+	docker tag ${REPONAME}/$(APPNAME):$(BRANCH)-$(SHORTSHA)$(DIRTY) \
+		${AWS_ECR_BASE_ADDRESS}/${REPONAME}/$(APPNAME):$(BRANCH)-$(SHORTSHA)$(DIRTY)
+	docker push ${AWS_ECR_BASE_ADDRESS}/${REPONAME}/$(APPNAME):$(BRANCH)-$(SHORTSHA)$(DIRTY)
 
-gox:
-	go get github.com/mitchellh/gox
+	docker tag ${REPONAME}/$(APPNAME):latest \
+		${AWS_ECR_BASE_ADDRESS}/${REPONAME}/$(APPNAME):latest
+	docker push ${AWS_ECR_BASE_ADDRESS}/${REPONAME}/$(APPNAME):latest
 
-prepare: gox prepareDeps
 
-.PHONY: prepare prepareDeps build dist-build dist
+## targets: Show available targets
+.PHONY: help targets
+help targets:
+	@echo "Available targets:"
+	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/   /' | sort
