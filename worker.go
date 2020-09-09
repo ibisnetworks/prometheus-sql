@@ -29,12 +29,12 @@ var defaultBackoff = backoff.Backoff{
 }
 
 var fetchAttempts = promauto.NewCounter(prometheus.CounterOpts{
-                Name: "prosql_fetch_attempt_total",
+                Name: "prosql_fetch_attempts",
                 Help: "The total number of query fetches attempted",
         })
 
 var fetchFailures = promauto.NewCounter(prometheus.CounterOpts{
-                Name: "prosql_fetch_failures_total",
+                Name: "prosql_fetch_failures",
                 Help: "The total number of query fetches failed",
         })
 
