@@ -14,6 +14,8 @@ import (
 
 	"github.com/jpillora/backoff"
 	"golang.org/x/net/context"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 // Backoff for fetching. It starts by waiting the minimum duration after a
@@ -25,6 +27,16 @@ var defaultBackoff = backoff.Backoff{
 	Jitter: true,
 	Factor: 2,
 }
+
+var fetchAttempts = promauto.NewCounter(prometheus.CounterOpts{
+                Name: "prosql_fetch_attempt_total",
+                Help: "The total number of query fetches attempted",
+        })
+
+var fetchFailures = promauto.NewCounter(prometheus.CounterOpts{
+                Name: "prosql_fetch_failures_total",
+                Help: "The total number of query fetches failed",
+        })
 
 // Worker is responsible for fetching data via SQL Agent
 type Worker struct {
@@ -60,6 +72,8 @@ func (w *Worker) fetchRecords(url string) error {
 	for {
 		t = time.Now()
 
+		fetchAttempts.Inc()
+
 		req, err = http.NewRequest("POST", url, bytes.NewBuffer(w.payload))
 
 		if err != nil {
@@ -85,6 +99,7 @@ func (w *Worker) fetchRecords(url string) error {
 			break
 		}
 		w.log.Print(err)
+		fetchFailures.Inc()
 
 		w.queryResultError()
 
