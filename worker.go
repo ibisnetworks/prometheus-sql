@@ -38,6 +38,16 @@ var fetchFailures = promauto.NewCounter(prometheus.CounterOpts{
                 Help: "The total number of query fetches failed",
         })
 
+var setMetricAttempts = promauto.NewCounter(prometheus.CounterOpts{
+                Name: "prosql_set_metric_attempts",
+                Help: "The total number of query metric was set",
+        })
+
+var setMetricFailures = promauto.NewCounter(prometheus.CounterOpts{
+                Name: "prosql_set_metric_failures",
+                Help: "The total number of query metric failed",
+        })
+
 // Worker is responsible for fetching data via SQL Agent
 type Worker struct {
 	query   *Query
@@ -50,9 +60,11 @@ type Worker struct {
 }
 
 func (w *Worker) setQueryResultMetrics(recs records) {
+	setMetricAttempts.Inc()
 	err := w.result.SetMetrics(recs, w.query.ValueOnError)
 	if err != nil {
 		w.log.Printf("Error setting metrics: %s", err)
+		setMetricFailures.Inc()
 		return
 	}
 }
